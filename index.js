@@ -21,11 +21,12 @@ app.use(cors({
 app.set('trust proxy', 1);
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 10 * 60 * 1000, // 15 minutes
   max: 100, 
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => req.ip,
 });
 
 app.use(limiter);
