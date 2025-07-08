@@ -18,7 +18,7 @@ app.use(cors({
   origin: ['*'],
   credentials: true
 }));
-app.set('trust proxy', true);
+app.set('trust proxy', 1);
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
