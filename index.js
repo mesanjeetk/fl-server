@@ -4,10 +4,11 @@ import rateLimit from 'express-rate-limit';
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import { job } from "./cron.js"
 
 const app = express();
 const httpServer = createServer(app);
-
+job.start();
 // Security middleware
 app.use(helmet({
   contentSecurityPolicy: false,
