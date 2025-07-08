@@ -18,11 +18,11 @@ app.use(cors({
   origin: ['*'],
   credentials: true
 }));
-
+app.set('trust proxy', true);
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: 100, 
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -510,6 +510,9 @@ io.on('connection', (socket) => {
   });
 });
 
+app.get('/', (req, res) => {
+  res.send('Hello, world!');
+});
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({
