@@ -53,9 +53,7 @@ app.use(rateLimit);
 // Socket.IO with enhanced security
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.NODE_ENV === 'production' 
-      ? ['https://your-domain.com'] 
-      : ['http://localhost:5173', 'http://localhost:3000'],
+    origin: ['*'],
     methods: ["GET", "POST"],
     credentials: true
   },
@@ -562,6 +560,12 @@ app.get('/health', (req, res) => {
     rooms: rooms.size,
     connections: io.engine.clientsCount,
     uptime: process.uptime()
+  });
+});
+app.get('/', (req, res) => {
+  res.json({
+    message:"worked",
+    success: true
   });
 });
 
