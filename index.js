@@ -3,10 +3,10 @@ import { createServer } from 'http';
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
-
+import { job } from "./cors.js"
 const app = express();
 const httpServer = createServer(app);
-
+job.start()
 // Security middleware
 app.use(helmet({
   contentSecurityPolicy: false,
@@ -14,9 +14,7 @@ app.use(helmet({
 }));
 
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? ['https://your-domain.com'] 
-    : ['http://localhost:5173', 'http://localhost:3000'],
+  origin: ['*'],
   credentials: true
 }));
 
