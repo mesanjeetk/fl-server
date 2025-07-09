@@ -1,14 +1,12 @@
 import { Server } from 'socket.io';
 import { createServer } from 'http';
-import rateLimit from 'express-rate-limit';
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
-import { job } from "./cron.js"
 
 const app = express();
 const httpServer = createServer(app);
-job.start();
+
 // Security middleware
 app.use(helmet({
   contentSecurityPolicy: false,
@@ -16,26 +14,50 @@ app.use(helmet({
 }));
 
 app.use(cors({
-  origin: ['*'],
+  origin: process.env.NODE_ENV === 'production' 
+    ? ['https://your-domain.com'] 
+    : ['http://localhost:5173', 'http://localhost:3000'],
   credentials: true
 }));
-app.set('trust proxy', 1);
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 10 * 60 * 1000, // 15 minutes
-  max: 100, 
-  message: 'Too many requests from this IP, please try again later.',
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => req.ip,
-});
 
-app.use(limiter);
+// Rate limiting
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 minutes
+const RATE_LIMIT_MAX = 100; // max requests per window
+
+const rateLimit = (req, res, next) => {
+  const ip = req.ip || req.connection.remoteAddress;
+  const now = Date.now();
+  
+  if (!rateLimitMap.has(ip)) {
+    rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+    return next();
+  }
+  
+  const limit = rateLimitMap.get(ip);
+  
+  if (now > limit.resetTime) {
+    limit.count = 1;
+    limit.resetTime = now + RATE_LIMIT_WINDOW;
+    return next();
+  }
+  
+  if (limit.count >= RATE_LIMIT_MAX) {
+    return res.status(429).json({ error: 'Too many requests' });
+  }
+  
+  limit.count++;
+  next();
+};
+
+app.use(rateLimit);
 
 // Socket.IO with enhanced security
 const io = new Server(httpServer, {
   cors: {
-    origin: ['*'],
+    origin: process.env.NODE_ENV === 'production' 
+      ? ['https://your-domain.com'] 
+      : ['http://localhost:5173', 'http://localhost:3000'],
     methods: ["GET", "POST"],
     credentials: true
   },
@@ -50,6 +72,7 @@ const io = new Server(httpServer, {
 // Enhanced room and connection management
 const rooms = new Map();
 const userConnections = new Map(); // Track connections per IP
+const socketRooms = new Map(); // Track which room each socket is in
 const roomLimits = {
   maxRooms: 1000,
   maxPlayersPerRoom: 2,
@@ -226,6 +249,28 @@ function joinPrivateRoom(roomId, playerName, socketId) {
   return { success: true, roomId };
 }
 
+function leaveRoom(socketId) {
+  const roomId = socketRooms.get(socketId);
+  if (!roomId) return;
+
+  const room = rooms.get(roomId);
+  if (!room) return;
+
+  // Remove player from room
+  room.players = room.players.filter(p => p.id !== socketId);
+  
+  // If room is empty, delete it
+  if (room.players.length === 0) {
+    rooms.delete(roomId);
+  } else {
+    // Notify remaining players
+    room.lastActivity = Date.now();
+    io.to(roomId).emit('opponent-disconnected');
+  }
+
+  socketRooms.delete(socketId);
+}
+
 // Cleanup inactive rooms
 setInterval(() => {
   const now = Date.now();
@@ -297,11 +342,14 @@ io.on('connection', (socket) => {
         return;
       }
 
+      // Leave current room if in one
+      leaveRoom(socket.id);
+
       const roomId = findOrCreatePublicRoom(playerName, socket.id, clientIP);
       const room = rooms.get(roomId);
       
       socket.join(roomId);
-      socket.roomId = roomId;
+      socketRooms.set(socket.id, roomId);
       room.lastActivity = Date.now();
 
       if (room.players.length === 2) {
@@ -343,11 +391,14 @@ io.on('connection', (socket) => {
         return;
       }
 
+      // Leave current room if in one
+      leaveRoom(socket.id);
+
       const roomId = createPrivateRoom(roomName, playerName, socket.id, clientIP);
       const room = rooms.get(roomId);
       
       socket.join(roomId);
-      socket.roomId = roomId;
+      socketRooms.set(socket.id, roomId);
 
       socket.emit('room-created', {
         room: {
@@ -380,6 +431,9 @@ io.on('connection', (socket) => {
         return;
       }
 
+      // Leave current room if in one
+      leaveRoom(socket.id);
+
       const result = joinPrivateRoom(roomId.toUpperCase(), playerName, socket.id);
       
       if (!result.success) {
@@ -389,7 +443,7 @@ io.on('connection', (socket) => {
 
       const room = rooms.get(roomId.toUpperCase());
       socket.join(roomId.toUpperCase());
-      socket.roomId = roomId.toUpperCase();
+      socketRooms.set(socket.id, roomId.toUpperCase());
 
       if (room.players.length === 2) {
         io.to(roomId.toUpperCase()).emit('game-start', {
@@ -486,24 +540,15 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('leave-room', ({ roomId }) => {
+    leaveRoom(socket.id);
+  });
+
   socket.on('disconnect', () => {
     console.log(`User disconnected: ${socket.id}`);
     
     userConnections.delete(socket.id);
-    
-    if (socket.roomId) {
-      const room = rooms.get(socket.roomId);
-      if (room) {
-        room.players = room.players.filter(p => p.id !== socket.id);
-        
-        if (room.players.length === 0) {
-          rooms.delete(socket.roomId);
-        } else {
-          room.lastActivity = Date.now();
-          io.to(socket.roomId).emit('opponent-disconnected');
-        }
-      }
-    }
+    leaveRoom(socket.id);
   });
 
   // Handle socket errors
@@ -512,9 +557,6 @@ io.on('connection', (socket) => {
   });
 });
 
-app.get('/', (req, res) => {
-  res.send('Hello, world!');
-});
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({
